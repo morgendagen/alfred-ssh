@@ -13,16 +13,41 @@ from time import time
 
 DEFAULT_MAX_RESULTS=36
 
-class Hosts(defaultdict):
+def sort_by_distance(input, names, key=None):
+	distances = []
+	if key is None:
+		key = lambda x: x
+	for name in names:
+		name_value = key(name)
+		distance_sum = 0
+		name_index = 0
+		for c in input:
+			pos = name_value.find(c, name_index)
+			if pos == -1:
+				distance_sum = -1
+				break
+			else:
+				distance_sum += pos
+				name_index = pos+1
+		if distance_sum != -1:
+			distances.append((name, distance_sum))
+	import operator
+	sorted_distances = sorted(distances, key=operator.itemgetter(1))
+	for s in sorted_distances:
+		sys.stderr.write("%s : %s" % (s[0]['arg'], s[1]))
+		sys.stderr.write('\n')
+	return [x[0] for x in sorted_distances]
+
+class Hosts(object):
+    sources = defaultdict(list)
+
     def __init__(self, query, user=None):
-        super(Hosts, self).__init__(list)
-        self[query].append('input')
         self.query = query
         self.user  = user
 
     def merge(self, source, hosts=()):
         for host in hosts:
-            self[host].append(source)
+            self.sources[host].append(source)
 
     def _alfred_item(self, host, source):
         _arg = self.user and '@'.join([self.user, host]) or host
@@ -37,12 +62,14 @@ class Hosts(defaultdict):
             "autocomplete": _arg
         }
 
-    def alfred_json(self, _filter=(lambda x: True), maxresults=DEFAULT_MAX_RESULTS):
+    def alfred_json(self, maxresults=DEFAULT_MAX_RESULTS):
         items = [
-            self._alfred_item(host, self[host]) for host in self.keys()
-            if _filter(host)
+            self._alfred_item(host, self.sources[host]) for host in self.sources.keys()
         ]
-        return json.dumps({"items": items[:maxresults]})
+        sorted_items = sort_by_distance(self.query, items, key=lambda x: x['arg'])
+        if len(sorted_items) == 0:
+            sorted_items.append(self._alfred_item(self.query, ['input']))
+        return json.dumps({"items": sorted_items[:maxresults]})
 
 def cache_file(filename, volatile=True):
     parent = os.path.expanduser(
@@ -151,9 +178,6 @@ def complete():
     else:
         (user, host) = (None, query)
 
-    host_chars = (('\\.' if x is '.' else x) for x in list(host))
-    pattern = re.compile('.*?\b?'.join(host_chars), flags=re.IGNORECASE)
-
     hosts = Hosts(query=host, user=user)
 
     for results in (
@@ -170,7 +194,7 @@ def complete():
             (file_prefix, file_path) = file_spec.split('=', 1)
             hosts.merge(*fetch_file(file_path, file_prefix, 'extra_file', None))
 
-    return hosts.alfred_json(pattern.search, maxresults=maxresults)
+    return hosts.alfred_json(maxresults=maxresults)
 
 if __name__ == '__main__':
     print(complete())
